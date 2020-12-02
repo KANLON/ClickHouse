@@ -15,8 +15,14 @@ def started_cluster():
 
         for node in [node1, node2]:
             node.query('''
-            CREATE TABLE replicated_mt(date Date, id UInt32, value Int32)
-            ENGINE = ReplicatedMergeTree('/clickhouse/tables/replicated_mt', '{replica}') PARTITION BY toYYYYMM(date) ORDER BY id;
+            CREATE TABLE replicated_mt1(date Date, id UInt32, value Int32)
+            ENGINE = ReplicatedMergeTree('/clickhouse/tables/replicated_mt1', '{replica}') PARTITION BY toYYYYMM(date) ORDER BY id;
+                '''.format(replica=node.name))
+
+        for node in [node1, node2]:
+            node.query('''
+            CREATE TABLE replicated_mt2(date Date, id UInt32, value Int32)
+            ENGINE = ReplicatedMergeTree('/clickhouse/tables/replicated_mt2', '{replica}') PARTITION BY toYYYYMM(date) ORDER BY id;
                 '''.format(replica=node.name))
 
         node1.query('''
@@ -94,59 +100,55 @@ def test_check_normal_table_corruption(started_cluster):
 
 
 def test_check_replicated_table_simple(started_cluster):
-    node1.query("TRUNCATE TABLE replicated_mt")
-    node2.query("SYSTEM SYNC REPLICA replicated_mt")
-    node1.query("INSERT INTO replicated_mt VALUES (toDate('2019-02-01'), 1, 10), (toDate('2019-02-01'), 2, 12)")
-    node2.query("SYSTEM SYNC REPLICA replicated_mt")
+    node1.query("INSERT INTO replicated_mt1 VALUES (toDate('2019-02-01'), 1, 10), (toDate('2019-02-01'), 2, 12)")
+    node2.query("SYSTEM SYNC REPLICA replicated_mt1")
 
-    assert node1.query("SELECT count() from replicated_mt") == "2\n"
-    assert node2.query("SELECT count() from replicated_mt") == "2\n"
+    assert node1.query("SELECT count() from replicated_mt1") == "2\n"
+    assert node2.query("SELECT count() from replicated_mt1") == "2\n"
 
-    assert node1.query("CHECK TABLE replicated_mt",
+    assert node1.query("CHECK TABLE replicated_mt1",
                        settings={"check_query_single_value_result": 0}) == "201902_0_0_0\t1\t\n"
-    assert node2.query("CHECK TABLE replicated_mt",
+    assert node2.query("CHECK TABLE replicated_mt1",
                        settings={"check_query_single_value_result": 0}) == "201902_0_0_0\t1\t\n"
 
-    node2.query("INSERT INTO replicated_mt VALUES (toDate('2019-01-02'), 3, 10), (toDate('2019-01-02'), 4, 12)")
-    node1.query("SYSTEM SYNC REPLICA replicated_mt")
-    assert node1.query("SELECT count() from replicated_mt") == "4\n"
-    assert node2.query("SELECT count() from replicated_mt") == "4\n"
+    node2.query("INSERT INTO replicated_mt1 VALUES (toDate('2019-01-02'), 3, 10), (toDate('2019-01-02'), 4, 12)")
+    node1.query("SYSTEM SYNC REPLICA replicated_mt1")
+    assert node1.query("SELECT count() from replicated_mt1") == "4\n"
+    assert node2.query("SELECT count() from replicated_mt1") == "4\n"
 
-    assert node1.query("CHECK TABLE replicated_mt PARTITION 201901",
+    assert node1.query("CHECK TABLE replicated_mt1 PARTITION 201901",
                        settings={"check_query_single_value_result": 0}) == "201901_0_0_0\t1\t\n"
-    assert node2.query("CHECK TABLE replicated_mt PARTITION 201901",
+    assert node2.query("CHECK TABLE replicated_mt1 PARTITION 201901",
                        settings={"check_query_single_value_result": 0}) == "201901_0_0_0\t1\t\n"
 
 
 def test_check_replicated_table_corruption(started_cluster):
-    node1.query("TRUNCATE TABLE replicated_mt")
-    node2.query("SYSTEM SYNC REPLICA replicated_mt")
-    node1.query("INSERT INTO replicated_mt VALUES (toDate('2019-02-01'), 1, 10), (toDate('2019-02-01'), 2, 12)")
-    node1.query("INSERT INTO replicated_mt VALUES (toDate('2019-01-02'), 3, 10), (toDate('2019-01-02'), 4, 12)")
-    node2.query("SYSTEM SYNC REPLICA replicated_mt")
+    node1.query("INSERT INTO replicated_mt2 VALUES (toDate('2019-02-01'), 1, 10), (toDate('2019-02-01'), 2, 12)")
+    node1.query("INSERT INTO replicated_mt2 VALUES (toDate('2019-01-02'), 3, 10), (toDate('2019-01-02'), 4, 12)")
+    node2.query("SYSTEM SYNC REPLICA replicated_mt2")
 
-    assert node1.query("SELECT count() from replicated_mt") == "4\n"
-    assert node2.query("SELECT count() from replicated_mt") == "4\n"
+    assert node1.query("SELECT count() from replicated_mt2") == "4\n"
+    assert node2.query("SELECT count() from replicated_mt2") == "4\n"
 
     part_name = node1.query(
-        "SELECT name from system.parts where table = 'replicated_mt' and partition_id = '201901' and active = 1").strip()
+        "SELECT name from system.parts where table = 'replicated_mt2' and partition_id = '201901' and active = 1").strip()
 
-    corrupt_data_part_on_disk(node1, "replicated_mt", part_name)
-    assert node1.query("CHECK TABLE replicated_mt PARTITION 201901", settings={
+    corrupt_data_part_on_disk(node1, "replicated_mt2", part_name)
+    assert node1.query("CHECK TABLE replicated_mt2 PARTITION 201901", settings={
         "check_query_single_value_result": 0}) == "{p}\t0\tPart {p} looks broken. Removing it and queueing a fetch.\n".format(
         p=part_name)
 
-    node1.query("SYSTEM SYNC REPLICA replicated_mt")
-    assert node1.query("CHECK TABLE replicated_mt PARTITION 201901",
+    node1.query("SYSTEM SYNC REPLICA replicated_mt2")
+    assert node1.query("CHECK TABLE replicated_mt2 PARTITION 201901",
                        settings={"check_query_single_value_result": 0}) == "{}\t1\t\n".format(part_name)
-    assert node1.query("SELECT count() from replicated_mt") == "4\n"
+    assert node1.query("SELECT count() from replicated_mt2") == "4\n"
 
-    remove_part_from_disk(node2, "replicated_mt", part_name)
-    assert node2.query("CHECK TABLE replicated_mt PARTITION 201901", settings={
+    remove_part_from_disk(node2, "replicated_mt2", part_name)
+    assert node2.query("CHECK TABLE replicated_mt2 PARTITION 201901", settings={
         "check_query_single_value_result": 0}) == "{p}\t0\tPart {p} looks broken. Removing it and queueing a fetch.\n".format(
         p=part_name)
 
-    node1.query("SYSTEM SYNC REPLICA replicated_mt")
-    assert node1.query("CHECK TABLE replicated_mt PARTITION 201901",
+    node1.query("SYSTEM SYNC REPLICA replicated_mt2")
+    assert node1.query("CHECK TABLE replicated_mt2 PARTITION 201901",
                        settings={"check_query_single_value_result": 0}) == "{}\t1\t\n".format(part_name)
-    assert node1.query("SELECT count() from replicated_mt") == "4\n"
+    assert node1.query("SELECT count() from replicated_mt2") == "4\n"

@@ -468,6 +468,8 @@ class ClickHouseCluster:
                 for instance in ['zoo1', 'zoo2', 'zoo3']:
                     conn = self.get_kazoo_client(instance)
                     conn.get_children('/')
+                    conn.stop()
+                    conn.close()
                 print("All instances of ZooKeeper started")
                 return
             except Exception as ex:
@@ -679,7 +681,7 @@ class ClickHouseCluster:
 
             clickhouse_start_cmd = self.base_cmd + ['up', '-d', '--no-recreate']
             print(("Trying to create ClickHouse instance by command %s", ' '.join(map(str, clickhouse_start_cmd))))
-            subprocess.check_output(clickhouse_start_cmd)
+            subprocess.check_output(clickhouse_start_cmd, stderr=subprocess.STDOUT)
             print("ClickHouse instance created")
 
             start_deadline = time.time() + 20.0  # seconds
@@ -768,13 +770,17 @@ class ClickHouseCluster:
     def run_kazoo_commands_with_retries(self, kazoo_callback, zoo_instance_name='zoo1', repeats=1, sleep_for=1):
         for i in range(repeats - 1):
             try:
-                kazoo_callback(self.get_kazoo_client(zoo_instance_name))
+                conn = self.get_kazoo_client(zoo_instance_name)
+                kazoo_callback(conn)
+                conn.stop()
+                conn.close()
                 return
             except KazooException as e:
                 print(repr(e))
                 time.sleep(sleep_for)
 
-        kazoo_callback(self.get_kazoo_client(zoo_instance_name))
+        conn = self.get_kazoo_client(zoo_instance_name)
+        kazoo_callback(conn)
 
     def add_zookeeper_startup_command(self, command):
         self.pre_zookeeper_commands.append(command)
